@@ -1,0 +1,168 @@
+#!/usr/bin/python
+# -*- coding: utf-8 -*-
+
+import graphlab as gl
+import numpy as np
+import matplotlib.pyplot as plt
+
+sales = gl.SFrame('kc_house_data.gl/')
+
+dtype_dict = {'bathrooms':float, 'waterfront':int, 'sqft_above':int, 'sqft_living15':float, 'grade':int, 'yr_renovated':int, 'price':float, 'bedrooms':float, 'zipcode':str, 'long':float, 'sqft_lot15':float, 'sqft_living':float, 'floors':str, 'condition':int, 'lat':float, 'date':str, 'sqft_basement':int, 'yr_built':int, 'id':str, 'sqft_lot':int, 'view':int}
+
+def get_numpy_data(data_sframe, features, output):
+
+	data_sframe['constant'] = 1 # add a constant column to an SFrame
+
+	# prepend variable 'constant' to the features list
+	features = ['constant'] + features
+
+	# select the columns of data_SFrame given by the 'features' list into the SFrame 'features_sframe'
+	features_matrix = gl.SFrame()
+
+	for feature in features:
+		features_matrix[feature] = data_sframe[feature]
+	# this will convert the features_sframe into a numpy matrix with GraphLab Create >= 1.7!!
+	features_matrix = features_matrix.to_numpy()
+
+	# assign the column of data_sframe associated with the target to the variable 'output_array'
+	output_array = data_sframe[output]
+
+	# this will convert the SArray into a numpy array:
+	output_array = output_array.to_numpy() # GraphLab Create>= 1.7!!
+	return features_matrix, output_array
+
+def predict_output(feature_matrix, weights):
+	predictions = np.dot(feature_matrix, weights)
+	return predictions
+
+def feature_derivative_ridge(errors, feature, weight, l2_penalty, feature_is_constant):
+	if feature_is_constant:
+		derivative = 2 * np.dot(errors, feature)
+
+	else:
+		derivative = 2 * np.dot(errors, feature) + 2 * l2_penalty * weight
+	
+	return derivative
+
+def ridge_regression_gradient_descent(feature_matrix, output, initial_weights, step_size, l2_penalty, max_iterations=100):
+	weights = np.array(initial_weights) # make sure it's a numpy array
+	j = 0
+	while j < max_iterations:
+		# compute the predictions using your predict_output() function
+		predictions = predict_output(feature_matrix, weights)
+		# compute the errors as predictions - output
+		errors = predictions - output
+		for i in xrange(len(weights)): # loop over each weight
+			# Recall that feature_matrix[:,i] is the feature column associated with weights[i]
+			# compute the derivative for weight[i].
+			if i == 0:
+				derivative_i = feature_derivative_ridge(errors, feature_matrix[:,i], weights[i], l2_penalty, True)
+			else:
+				derivative_i = feature_derivative_ridge(errors, feature_matrix[:,i], weights[i], l2_penalty, False)
+
+			# subtract the step size times the derivative from the current weight  
+			weights[i] = weights[i] - step_size * derivative_i
+		j = j + 1
+
+	return weights
+
+(example_features, example_output) = get_numpy_data(sales, ['sqft_living'], 'price')
+my_weights = np.array([1., 10.])
+test_predictions = predict_output(example_features, my_weights)
+errors = test_predictions - example_output # prediction errors
+print "##################################################################################################################"
+print "													derivative test													 "
+# next two lines should print the same values
+print feature_derivative_ridge(errors, example_features[:,1], my_weights[1], 1, False)
+print np.sum(errors*example_features[:,1])*2+20.
+print ''
+
+# next two lines should print the same values
+print feature_derivative_ridge(errors, example_features[:,0], my_weights[0], 1, True)
+print np.sum(errors)*2.
+print "##################################################################################################################"
+
+print "SIMPLE RIDGE REGRESSION"
+train_data,test_data = sales.random_split(.8,seed=0)
+
+simple_features = ['sqft_living']
+my_output = 'price'
+(simple_feature_matrix, output) = get_numpy_data(train_data, simple_features, my_output)
+(simple_test_feature_matrix, test_output) = get_numpy_data(test_data, simple_features, my_output)
+
+init_weights = np.zeros(simple_feature_matrix.shape[1])
+
+simple_weights_0_penalty = ridge_regression_gradient_descent(feature_matrix = simple_feature_matrix,output = output, initial_weights = init_weights, step_size = 1e-12, l2_penalty = 0., max_iterations = 1000)
+print "simple weights 0 penalty"
+print simple_weights_0_penalty
+
+simple_weights_high_penalty = ridge_regression_gradient_descent(feature_matrix = simple_feature_matrix,output = output, initial_weights = init_weights, step_size = 1e-12, l2_penalty = 1e11, max_iterations = 1000)
+print "simple weights high penalty"
+print simple_weights_high_penalty
+
+# plot the two models
+print "BLÜ: KEIN PENALTIEREN\nRÖGEN: HÖGTIG PENALTIEREN"
+plt.plot(simple_feature_matrix,output,'k.',
+		simple_feature_matrix,predict_output(simple_feature_matrix, simple_weights_0_penalty),'b-',
+		simple_feature_matrix,predict_output(simple_feature_matrix, simple_weights_high_penalty),'r-')
+plt.show()
+
+print "Q1: FEATURE WEIGHT (NO L2)"
+print simple_weights_0_penalty[1]
+print "Q1: FEATURE WIEGHT (HIGH L2)"
+print simple_weights_high_penalty[1]
+
+init_weights_pred = predict_output(simple_test_feature_matrix, init_weights)
+RSS_init_weights = ((test_output - init_weights_pred) ** 2).sum()
+print "Q3: RSS initial weights:"
+print RSS_init_weights
+
+no_l2_pred = predict_output(simple_test_feature_matrix, simple_weights_0_penalty)
+RSS_no_l2 = ((test_output - no_l2_pred) ** 2).sum()
+print "Q3: RSS no penalization:"
+print RSS_no_l2
+
+high_l2_pred = predict_output(simple_test_feature_matrix, simple_weights_high_penalty)
+RSS_high_l2 = ((test_output - high_l2_pred) ** 2).sum()
+print "Q3: RSS high penalization:"
+print RSS_high_l2
+
+print "MULTIPLE RIDGE REGRESSION"
+model_features = ['sqft_living', 'sqft_living15']
+my_output = 'price'
+(feature_matrix, output) = get_numpy_data(train_data, model_features, my_output)
+(test_feature_matrix, test_output) = get_numpy_data(test_data, model_features, my_output)
+
+init_weights = np.zeros(feature_matrix.shape[1])
+
+multiple_weights_0_penalty = ridge_regression_gradient_descent(feature_matrix = feature_matrix, output = output, initial_weights = init_weights, step_size = 1e-12, l2_penalty = 0., max_iterations = 1000)
+
+multiple_weights_high_penalty = ridge_regression_gradient_descent(feature_matrix = feature_matrix, output = output, initial_weights = init_weights, step_size = 1e-12, l2_penalty = 1e11, max_iterations = 1000)
+
+print "Q4: FEATURE WEIGHT (NO L2):"
+print multiple_weights_0_penalty[1]
+print "Q4: FEATURE WEIGHT (HIGH L2):"
+print multiple_weights_high_penalty[1]
+
+init_weights_pred = predict_output(test_feature_matrix, init_weights)
+RSS_init_weights = ((test_output - init_weights_pred) ** 2).sum()
+print "Q5: RSS initial weights:"
+print RSS_init_weights
+
+no_l2_pred = predict_output(test_feature_matrix, multiple_weights_0_penalty)
+RSS_no_l2 = ((test_output - no_l2_pred) ** 2).sum()
+print "Q5: RSS no penalization:"
+print RSS_no_l2
+
+high_l2_pred = predict_output(test_feature_matrix, multiple_weights_high_penalty)
+RSS_high_l2 = ((test_output - high_l2_pred) ** 2).sum()
+print "Q5: RSS high penalization:"
+print RSS_high_l2
+
+print "Q6: no L2 prediction error:"
+NO_L2_FIRST = (test_output - no_l2_pred) ** 2
+print NO_L2_FIRST
+
+print "Q6: high L2 prediction error:"
+high_l2_first = (test_output - high_l2_pred) ** 2
+print high_l2_first

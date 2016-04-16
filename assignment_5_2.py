@@ -1,0 +1,206 @@
+#!/usr/bin/python
+# -*- coding: utf-8 -*-
+
+import pandas as pd
+import graphlab as gl
+import numpy as np
+
+# dtype_dict = {'bathrooms':float, 'waterfront':int, 'sqft_above':int, 'sqft_living15':float, 'grade':int, 'yr_renovated':int, 'price':float, 'bedrooms':float, 'zipcode':str, 'long':float, 'sqft_lot15':float, 'sqft_living':float, 'floors':str, 'condition':int, 'lat':float, 'date':str, 'sqft_basement':int, 'yr_built':int, 'id':str, 'sqft_lot':int, 'view':int}
+
+def get_numpy_data(data_sframe, features, output):
+
+	data_sframe['constant'] = 1 # add a constant column to an SFrame
+
+	# prepend variable 'constant' to the features list
+	features = ['constant'] + features
+
+	# select the columns of data_SFrame given by the 'features' list into the SFrame 'features_sframe'
+	features_matrix = gl.SFrame()
+
+	for feature in features:
+		features_matrix[feature] = data_sframe[feature]
+	# this will convert the features_sframe into a numpy matrix with GraphLab Create >= 1.7!!
+	features_matrix = features_matrix.to_numpy()
+
+	# assign the column of data_sframe associated with the target to the variable 'output_array'
+	output_array = data_sframe[output]
+
+	# this will convert the SArray into a numpy array:
+	output_array = output_array.to_numpy() # GraphLab Create>= 1.7!!
+	return features_matrix, output_array
+
+def predict_output(feature_matrix, weights):
+	weights = np.array(weights, dtype = float)
+	feature_matrix = np.array(feature_matrix, dtype = float)
+	predictions = np.dot(feature_matrix, weights)
+	return predictions
+
+def normalize_features(features):
+	normalized_features = []
+	norms = []
+
+	for i in range(0,features.shape[1]):
+		feature = np.array(features[:,i], dtype = float)
+		norm_i = np.linalg.norm(feature, axis=0)
+		norms.append(norm_i)
+		normalized_features.append(feature / norm_i)
+
+	normalized_features = np.array(normalized_features).T
+	norms = np.array(norms, dtype = float)
+	return normalized_features, norms
+
+def lasso_coordinate_descent_step(i, feature_matrix, output, weights, l1_penalty):
+	# compute prediction
+	prediction = predict_output(feature_matrix, weights)
+	# compute ro[i] = SUM[ [feature_i]*(output - prediction + weight[i]*[feature_i]) ]
+	ro_i = (feature_matrix[:,i] * (output - prediction + weights[i] * feature_matrix[:,i])).sum()
+	
+	if i == 0: # intercept -- do not regularize
+		new_weight_i = ro_i
+	elif ro_i < -l1_penalty/2.:
+		new_weight_i = ro_i + l1_penalty/2
+	elif ro_i > l1_penalty/2.:
+		new_weight_i = ro_i - l1_penalty/2
+	else:
+		new_weight_i = 0.
+	
+	return float(new_weight_i)
+
+def lasso_cyclical_coordinate_descent(feature_matrix, output, initial_weights, l1_penalty, tolerance):
+	weights = np.array(initial_weights, dtype = long)
+	delta = {} # to measure convergence
+
+	while True:
+		for i in range(0,feature_matrix.shape[1]):
+			new_weight = lasso_coordinate_descent_step(i, feature_matrix, output, weights, l1_penalty)
+			delta[i] = abs(weights[i] - new_weight)
+			weights[i] = new_weight
+		# check for convergence
+		if sum([delta[i] < tolerance for i in range(0,len(delta))]):
+			break
+	return weights
+
+def print_non_zero_features(features,weights):
+
+	for i in range(0,len(weights)):
+		if weights[i] != 0:
+			print features[i]
+	print ""
+
+sales = gl.SFrame('kc_house_data.gl/')
+
+###########################################################
+# EFFECT OF L1 PENALTY
+###########################################################
+print ""
+
+l1_features_matrix,l1_output = get_numpy_data(sales, ['sqft_living','bedrooms'], 'price')
+
+l1_normalized_features, l1_norms = normalize_features(l1_features_matrix)
+
+weights = np.array([1.,4.,1.])
+
+prediction = predict_output(l1_normalized_features, weights)
+
+ro = [0,0,0]
+
+for i in range(0,len(weights)):
+	ro[i] = (l1_normalized_features[:,i] * (l1_output - prediction + weights[i] * l1_normalized_features[:,i])).sum()
+
+print "Q1 & 2: Values of ro"
+print "\tFor first feature:\t%f\n\tl1 = [%f,%f] set W1 = 0" % (ro[1],-2*ro[1],2*ro[1])
+print "\tFor second feature:\t%f\n\tl1 = [%f,%f] set W2 = 0" % (ro[2],-2*ro[2],2*ro[2])
+print ""
+
+# should print 0.425558846691
+import math
+print "Test"
+print lasso_coordinate_descent_step(1, np.array([[3./math.sqrt(13),1./math.sqrt(10)],
+				   [2./math.sqrt(13),3./math.sqrt(10)]]), np.array([1., 1.]), np.array([1., 4.]), 0.1)
+print ""
+
+###########################################################
+#  SIMPLE 2-FEATURE MODEL
+###########################################################
+
+initial_weights = [0,0,0]
+l1_penalty = 1e7
+tolerance = 1.
+
+simple_weights = lasso_cyclical_coordinate_descent(l1_normalized_features, l1_output, initial_weights, l1_penalty, tolerance)
+
+simple_prediction = predict_output(l1_normalized_features, simple_weights)
+simple_RSS = ((l1_output - simple_prediction) ** 2).sum()
+
+print "Q3: RSS of the simple models"
+print simple_RSS
+print ""
+
+print "Q4: deduce which features had noon-zero weights"
+print_non_zero_features(['constant','sqft_living','bedrooms'], simple_weights)
+print ""
+
+###########################################################
+#  EVALUATING LASSO WITH MORE FEATURES
+###########################################################
+
+train_data,test_data = sales.random_split(.8,seed=0)
+
+features = ['bedrooms', 'bathrooms', 'sqft_living', 'sqft_lot', 'floors', 'waterfront', 'view', 'condition', 'grade', 'sqft_above', 'sqft_basement', 'yr_built', 'yr_renovated']
+
+train_features, train_output = get_numpy_data(train_data, features, 'price')
+
+train_normalized, train_norms = normalize_features(train_features)
+
+l1_penalty = 1e7
+initial_weights = np.zeros(train_normalized.shape[1])
+
+weights1e7 = lasso_cyclical_coordinate_descent(train_normalized, train_output, initial_weights, l1_penalty, tolerance)
+print "Q5: non-zero weights for more features"
+print weights1e7
+print_non_zero_features(['constant']+features,weights1e7)
+
+l1_penalty = 1e8
+
+weights1e8 = lasso_cyclical_coordinate_descent(train_normalized, train_output, initial_weights, l1_penalty, tolerance)
+print "Q6: non-zero weights for more features"
+print weights1e8
+print_non_zero_features(['constant']+features,weights1e8)
+
+l1_penalty = 1e4
+tolerance = 5e5
+
+weights1e4 = lasso_cyclical_coordinate_descent(train_normalized, train_output, initial_weights, l1_penalty, tolerance)
+print "Q7: non-zero weights for more features"
+print weights1e4
+print_non_zero_features(['constant']+features,weights1e4)
+
+###########################################################
+#  RE-SCALING WEIGHTS
+###########################################################
+
+print train_norms.shape
+
+normalized_weights1e7 = weights1e7 / train_norms
+normalized_weights1e8 = weights1e8 / train_norms
+normalized_weights1e4 = weights1e4 / train_norms
+
+print "re-scaling test"
+print normalized_weights1e7[3]
+
+print "Q8: LOWEST RSS"
+
+test_features, test_output = get_numpy_data(train_data, features, 'price')
+
+prediction_1e7 = predict_output(test_features, normalized_weights1e7)
+RSS_1e7 = ((test_output - prediction_1e7) ** 2).sum()
+
+print "\tfor L1=1e7:\t%f" % RSS_1e7
+
+prediction_1e8 = predict_output(test_features, normalized_weights1e8)
+RSS_1e8 = ((test_output - prediction_1e8) ** 2).sum()
+print "\tfor L1=1e8:\t%f" % RSS_1e8
+
+prediction_1e4 = predict_output(test_features, normalized_weights1e4)
+RSS_1e4 = ((test_output - prediction_1e4) ** 2).sum()
+print "\tfor L1=1e4:\t%f" % RSS_1e4

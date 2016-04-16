@@ -1,0 +1,217 @@
+#!/usr/bin/python
+# -*- coding: utf-8 -*-
+
+import graphlab as gl
+import numpy as np
+
+def get_numpy_data(data_sframe, features, output):
+
+	data_sframe['constant'] = 1 # add a constant column to an SFrame
+
+	# prepend variable 'constant' to the features list
+	features = ['constant'] + features
+
+	# select the columns of data_SFrame given by the 'features' list into the SFrame 'features_sframe'
+	features_matrix = gl.SFrame()
+
+	for feature in features:
+		features_matrix[feature] = data_sframe[feature]
+	# this will convert the features_sframe into a numpy matrix with GraphLab Create >= 1.7!!
+	features_matrix = features_matrix.to_numpy()
+
+	# assign the column of data_sframe associated with the target to the variable 'output_array'
+	output_array = data_sframe[output]
+
+	# this will convert the SArray into a numpy array:
+	output_array = output_array.to_numpy() # GraphLab Create>= 1.7!!
+	return features_matrix, output_array
+
+def normalize_features(features):
+	#normalized_features = []
+	#norms = []
+
+	#for i in range(0,features.shape[1]):
+		#feature = np.array(features[:,i], dtype = float)
+	features = np.array(features, dtype = float)
+	norms = np.linalg.norm(features, axis=0, keepdims = True)
+	# norms.append(norm_i)
+	normalized_features = features / norms
+
+	#normalized_features = np.array(normalized_features).T
+	#norms = np.array(norms)#, dtype = float)
+	return normalized_features, norms
+
+def euclidian(query, known):
+	return np.sqrt(np.sum( (query - known) ** 2 ))
+
+def compute_distances(features_instances, features_query):
+	return np.sqrt( np.sum( (features_instances - features_query) **2, axis=1))
+
+def k_nearest_neighbours(k, feature_train, features_query):
+	
+	distances = compute_distances(feature_train, features_query)
+	neighbours = np.argsort(distances)[:k]
+
+	return neighbours
+
+def predict_output_of_query(k, features_train, output_train, features_query):
+	k_nearest = k_nearest_neighbours(k, features_train, features_query)
+	prediction = np.average(output_train[k_nearest])
+	return prediction
+
+def predict_output(k, features_train, output_train, features_query):
+	predictions = []
+	for i in range(0,features_query.shape[0]):
+		prediction_i = predict_output_of_query(k, features_train, output_train, features_query[i])
+		predictions.append(prediction_i)
+	return predictions
+
+################################################################################################################
+
+sales = gl.SFrame('kc_house_data_small.gl/')
+
+# divide into train, validation, and test sets
+(train_and_validation, test) = sales.random_split(.8, seed=1)
+(train, validation) = train_and_validation.random_split(.8, seed=1)
+
+features = sales.column_names()[3:]
+output = sales.column_names()[2]
+
+print "Feature list:"
+print features
+print ""
+print "Target\t'%s'" % output
+print ""
+
+print "Obtaining numpy matrices from SFrame datasets..."
+train_features, train_output = get_numpy_data(train, features, output)
+validation_features, validation_output = get_numpy_data(validation, features, output)
+test_features, test_output = get_numpy_data(test, features, output)
+
+print "Correcting feature types..."
+train_features = np.array(train_features, dtype = float)
+train_output = np.array(train_output, dtype = float)
+
+validation_features = np.array(validation_features, dtype = float)
+validation_output = np.array(validation_output, dtype = float)
+
+test_features = np.array(test_features, dtype = float)
+test_output = np.array(test_output, dtype = float)
+
+print "Normalizing training, validation, and testing sets..."
+
+train_normalized, norms = normalize_features(train_features)
+validation_normalized = validation_features / norms
+test_normalized = test_features / norms
+
+print ""
+print "Q1: Euclidian distance between first query house and 10th training house"
+dist_1 = euclidian(test_normalized[0],train_normalized[9])
+print dist_1
+print ""
+##################################################################
+# Computing distances on a subset of training set
+##################################################################
+
+print "DISTANCES ON 10 FIRST HOUSES..."
+
+query_house = test_normalized[0]
+
+my_subset = train_normalized[0:10]
+
+my_distances = [euclidian(query_house,my_subset[i]) for i in range(0,len(my_subset))]
+
+for i in range(0,len(my_distances)):
+	print "%i: %f" % (i, my_distances[i])
+print ""
+print "Q2: closest house"
+print  "\t%ith" % filter(lambda x: my_distances[x] == min(my_distances), range(0,len(my_subset)))[0]
+print ""
+
+print "VECTORIZATION TEST"
+# verify that vectorization works
+results = train_normalized[0:3] - test_normalized[0]
+print results[0] - (train_normalized[0]-test_normalized[0])
+# should print all 0's if results[0] == (train_normalized[0]-test_normalized[0])
+print results[1] - (train_normalized[1]-test_normalized[0])
+# should print all 0's if results[1] == (train_normalized[1]-test_normalized[0])
+print results[2] - (train_normalized[2]-test_normalized[0])
+# should print all 0's if results[2] == (train_normalized[2]-test_normalized[0])
+print ""
+
+print "Vectorized euclidian test:"
+diff = train_normalized - query_house
+print diff[-1].sum()
+print ""
+
+print "Calculating the square of feature-wise differences.."
+#print "(TEST): %f\t%f" % (, )
+print "TEST:"
+print np.sum(diff**2, axis=1)[15]
+print np.sum(diff[15]**2)
+print ""
+
+print "Calculating (vectorized) Euclidian distances:"
+distances = np.sqrt( np.sum(diff**2, axis=1))
+print "TEST:\t%f" % distances[100]
+print ""
+
+print "TEST THE compute_distances FUNCTION:"
+print "\t%f" % compute_distances(train_normalized, test_normalized[0])[100]
+print ""
+
+# computing the distances using the 3rd house in test set
+distances3 = compute_distances(train_normalized, test_normalized[2])
+print "Q3: 1-nearest neighbour of the third house in test set:"
+nearest_neighbour = filter(lambda x: distances3[x] == min(distances3), range(0,len(distances3)))[0]
+print "\tHouse number %i" % nearest_neighbour
+print ""
+
+print "Q4: prediction according to 1-NN"
+print "\t$%f" % train_output[nearest_neighbour]
+print ""
+
+##################################################################
+# K-NEAREST NEIGHBOURS
+##################################################################
+
+print "Q5: 4-NN on the third house of the test set:"
+neighbours4 = k_nearest_neighbours(4, train_normalized, test_normalized[2])
+print neighbours4
+print ""
+
+print "Q6: 4-NN prediction on 3rd house:"
+prediction4 = predict_output_of_query(4, train_normalized, train_output, test_normalized[2])
+print "\t$%i" % prediction4
+print ""
+
+print "Q7: 10-NN predictions for the first 10 houses:"
+predictions10 = predict_output(10, train_normalized, train_output, test_normalized[0:11])
+print ""
+print " RESULTS: "
+for i in range(0, len(predictions10)):
+	print "%i:\t%i" % (i,predictions10[i])	
+
+##################################################################
+# CHOOSING BEST VALUE OF K
+##################################################################
+
+print "PREDICTIONS ON THE VALIDATION SET"
+print ""
+min_RSS = 1e999
+best_k = 0
+for k in range(1,16):
+	predictions_val = predict_output(k, train_normalized, train_output, validation_normalized)
+	predictions_val = np.array(predictions_val)
+	RSS = np.sum( (predictions_val - validation_output) ** 2 )
+	if RSS < min_RSS:
+		min_RSS = RSS
+		best_k = k
+
+print "Best value of k:\t%i" % best_k
+print ""
+print "Using the optimal k on the test set..."
+predictions_test = predict_output(best_k, train_normalized, train_output, test_normalized)
+RSS_test = np.sum( (predictions_test - test_output) ** 2 )
+print "RSS on TEST data:"
+print RSS_test

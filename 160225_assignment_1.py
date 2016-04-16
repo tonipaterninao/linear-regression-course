@@ -1,0 +1,84 @@
+#!/usr/bin/python
+
+import graphlab as gl
+
+# import the data
+
+sales = gl.SFrame('kc_house_data.gl/')
+
+train_data,test_data = sales.random_split(.8,seed=0)
+
+def simple_linear_regression(input_feature, output):
+	
+	# the number of observations N
+	N = len(input_feature)
+
+	# explicit names of variables
+	xy_product = input_feature * output
+	x_square = input_feature**2
+	
+	numerator = xy_product.mean() - (input_feature.mean() * output.mean())
+	denominator = x_square.mean() - (input_feature.mean() * input_feature.mean())
+
+	slope = numerator / denominator
+	intercept = output.mean() - (slope * input_feature.mean())
+	
+	return intercept, slope
+
+def get_regression_predictions(input_feature, intercept, slope):
+
+	predicted_output = (input_feature * slope) + intercept
+	
+	return predicted_output
+
+def get_RSS(input_feature, output, intercept, slope):
+	
+	prediction = get_regression_predictions(input_feature, intercept, slope)
+	RSS = ((output - prediction) ** 2).sum()
+	
+	return RSS
+
+def inverse_regression_predictions(output, intercept, slope):
+	
+	input_estimate = (output - intercept)/slope
+	
+	return input_estimate
+
+input_feature_sq = train_data['sqft_living']
+output_train = train_data['price']
+
+## Coefficients for training data (sqft as input_feature) (Q4)
+sqfeet_intercept, sqfeet_slope = simple_linear_regression(input_feature_sq, output_train)
+
+## Prediction for a house of 2650sqft (Q6)
+answer_6 = get_regression_predictions(2650, sqfeet_intercept, sqfeet_slope)
+print "Answer to question 6:\t$" + str(answer_6)
+
+## Calculation of RSS of the model for Q4 (Q8)
+RSS_sqft = get_RSS(input_feature_sq, output_train, sqfeet_intercept, sqfeet_slope)
+print "Answer to question 8:\tRSS=" + str(RSS_sqft)
+
+## Estimate input for a $800000 house (Q10)
+sqft_estimate = inverse_regression_predictions(800000, sqfeet_intercept, sqfeet_slope)
+print "Answer to question 10:\tsqft_estimate=" + str(sqft_estimate)
+
+## Build a model using number of bedrooms
+input_bedrooms = train_data['bedrooms']
+
+bedr_intercept, bedr_slope = simple_linear_regression(input_bedrooms, output_train)
+
+## calculate RSS for both models (with test_data)
+
+sq_input_test = test_data['sqft_living']
+bedr_input_test = test_data['bedrooms']
+output_test = test_data['price']
+
+RSS_sqft_test = get_RSS(sq_input_test, output_test, sqfeet_intercept, sqfeet_slope)
+RSS_bedr_test = get_RSS(bedr_input_test, output_test, bedr_intercept, bedr_slope)
+
+if (RSS_sqft_test < RSS_bedr_test):
+	answer_13 = "square feet\t" + "RSS=" + str(RSS_sqft_test)
+else:
+	answer_13 = "no. bedrooms\t" + "RSS=" + str(test_RSS_bedr)
+
+print "Answer to question 13:\t" + answer_13
